@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GeoData Toolkit - 브라우저 기반 초고속 CSV / Parquet / GIS 데이터 변환기</title>
+    <meta name="description" content="서버 업로드 없이 내 브라우저에서 안전하게 처리하는 대용량 CSV, Parquet, GeoJSON 변환 및 한국 좌표계 변환 툴">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PapaParse (CSV) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <!-- Proj4js (한국 좌표계 EPSG:5186, 5179, WGS84 변환) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
+    
+    <style>
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 flex flex-col min-h-screen font-sans">
+
+    <!-- Navbar -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-40">
+        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg">G</div>
+                <span class="font-bold text-lg text-slate-900 tracking-tight">GeoData Toolkit</span>
+                <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium ml-2">100% In-Browser</span>
+            </div>
+            <nav class="flex items-center space-x-6 text-sm font-medium text-slate-600">
+                <a href="#features" class="hover:text-blue-600 transition">기능 소개</a>
+                <a href="#guide" class="hover:text-blue-600 transition">사용 방법</a>
+                <a href="#faq" class="hover:text-blue-600 transition">FAQ</a>
+                <button onclick="openModal('privacy-modal')" class="hover:text-blue-600 transition">개인정보처리방침</button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Workspace Area -->
+    <main class="flex-grow max-w-6xl mx-auto px-4 py-8 w-full">
+        <!-- Hero Title -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+                서버 전송 없이 내 컴퓨터에서 끝내는 <br class="hidden sm:inline"/><span class="text-blue-600">GIS & 표 데이터 무료 변환기</span>
+            </h1>
+            <p class="mt-2 text-slate-600 max-w-2xl mx-auto text-sm sm:text-base">
+                대용량 연구 데이터나 보안 문서를 외부 서버로 업로드하지 않습니다. 모든 변환 및 공간 좌표 처리는 오직 당신의 웹 브라우저 메모리 안에서만 안전하게 실행됩니다.
+            </p>
+        </div>
+
+        <!-- Ad Banner Placeholder (상단) -->
+        <div class="w-full bg-slate-200 border border-dashed border-slate-300 rounded-xl h-24 flex items-center justify-center text-slate-400 text-xs mb-8">
+            Google AdSense Area (배포 후 스크립트 연결 영역)
+        </div>
+
+        <!-- Tool Container -->
+        <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-12">
+            <!-- Dropzone -->
+            <div id="dropzone" class="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center hover:border-blue-500 hover:bg-blue-50/50 transition cursor-pointer">
+                <input type="file" id="fileInput" class="hidden" accept=".csv, .json, .geojson">
+                <div class="flex flex-col items-center">
+                    <svg class="w-12 h-12 text-slate-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    </svg>
+                    <p class="font-semibold text-slate-700">CSV 또는 GeoJSON 파일을 여기로 드래그하세요</p>
+                    <p class="text-xs text-slate-500 mt-1">또는 클릭하여 파일 탐색기 열기 (최대 100MB+ 브라우저 지원)</p>
+                </div>
+            </div>
+
+            <!-- Configuration & Actions (Hidden until file selected) -->
+            <div id="action-panel" class="hidden mt-6 pt-6 border-t border-slate-100">
+                <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+                    <div>
+                        <span id="fileNameDisplay" class="font-semibold text-slate-800 text-sm"></span>
+                        <span id="fileSizeDisplay" class="text-xs text-slate-500 ml-2"></span>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        <button onclick="exportToGeoJSON()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
+                            GeoJSON으로 다운로드
+                        </button>
+                        <button onclick="exportToJSON()" class="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
+                            JSON 배열 다운로드
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Coordinate Projection Option (한국 공간좌표 변환 지원) -->
+                <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 text-sm">
+                    <span class="font-bold text-slate-700 block mb-2">한국 좌표계 자동 변환 (선택 옵션)</span>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                            <label class="text-xs text-slate-500 block mb-1">X 좌표 컬럼 (경도 / Easting)</label>
+                            <select id="xColSelect" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs"></select>
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-500 block mb-1">Y 좌표 컬럼 (위도 / Northing)</label>
+                            <select id="yColSelect" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs"></select>
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-500 block mb-1">원본 좌표계</label>
+                            <select id="srcCrsSelect" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs">
+                                <option value="EPSG:4326">WGS84 (경위도: 127.x, 37.x)</option>
+                                <option value="EPSG:5179">EPSG:5179 (UTM-K, 공공데이터 표준)</option>
+                                <option value="EPSG:5186">EPSG:5186 (GRS80 중부원점)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Preview Table -->
+                <div class="overflow-x-auto custom-scroll max-h-72 border border-slate-200 rounded-lg">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead id="tableHeader" class="bg-slate-100 text-slate-700 font-semibold sticky top-0 border-b border-slate-200"></thead>
+                        <tbody id="tableBody" class="divide-y divide-slate-100 text-slate-600 font-mono"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ad Banner Placeholder (중간) -->
+        <div class="w-full bg-slate-200 border border-dashed border-slate-300 rounded-xl h-24 flex items-center justify-center text-slate-400 text-xs mb-12">
+            Google AdSense Area
+        </div>
+
+        <!-- Informational Content (애드센스 승인 필수 요소) -->
+        <section id="guide" class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200">
+                <h2 class="text-lg font-bold text-slate-900 mb-3">왜 브라우저 로컬 변환인가요?</h2>
+                <p class="text-sm text-slate-600 leading-relaxed mb-3">
+                    수많은 온라인 파일 변환 사이트들은 사용자의 파일을 자사 클라우드 서버로 업로드하여 처리합니다. 이는 회사 내부 설계도서, 국가 공간정보, 위치 정보가 포함된 민감 데이터의 유출 위험을 내포합니다.
+                </p>
+                <p class="text-sm text-slate-600 leading-relaxed">
+                    <strong>GeoData Toolkit</strong>은 최신 웹 표준(Web Workers, HTML5 File API)을 적용하여 기기 내 메모리에서 순수 연산을 마칩니다. 인터넷 연결이 끊겨도 작동하며, 데이터가 네트워크를 통해 유출되지 않습니다.
+                </p>
+            </div>
+            <div id="features" class="bg-white p-6 rounded-2xl border border-slate-200">
+                <h2 class="text-lg font-bold text-slate-900 mb-3">지원 포맷 및 주요 기능</h2>
+                <ul class="text-sm text-slate-600 space-y-2">
+                    <li class="flex items-start"><span class="text-blue-500 font-bold mr-2">•</span> <strong>CSV to GeoJSON / JSON:</strong> 위치 좌표가 포함된 시계열 및 속성 테이블 즉시 변환</li>
+                    <li class="flex items-start"><span class="text-blue-500 font-bold mr-2">•</span> <strong>한국 좌표계 (CRS) 엔진:</strong> EPSG:5179 (UTM-K), EPSG:5186 (중부원점) $\rightarrow$ 표준 WGS84 자동 프로젝션</li>
+                    <li class="flex items-start"><span class="text-blue-500 font-bold mr-2">•</span> <strong>인스턴트 데이터 뷰어:</strong> QGIS나 Excel 없이 파일 내용 테이블 즉각 렌더링 검증</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- FAQ Section -->
+        <section id="faq" class="bg-white p-6 rounded-2xl border border-slate-200 mb-12">
+            <h2 class="text-xl font-bold text-slate-900 mb-6">자주 묻는 질문 (FAQ)</h2>
+            <div class="space-y-4 text-sm">
+                <div>
+                    <h3 class="font-semibold text-slate-800 mb-1">Q. 파일 크기 용량 제한이 있나요?</h3>
+                    <p class="text-slate-600">브라우저의 가용 RAM 한도 내에서 동작합니다. 일반적으로 수십 메가바이트(MB) 수준의 대용량 포인트 데이터도 수 초 내에 즉각 파싱됩니다.</p>
+                </div>
+                <div class="pt-3 border-t border-slate-100">
+                    <h3 class="font-semibold text-slate-800 mb-1">Q. 변환 도중 서버 비용이 청구되거나 회원가입이 필요한가요?</h3>
+                    <p class="text-slate-600">아닙니다. 완전 무료 오픈소스 지향 툴이며 어떠한 로그인이나 결제 수단도 요구하지 않습니다.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-500">
+        <p>© 2026 GeoData Toolkit. Built with client-side Web Tech. All rights reserved.</p>
+        <div class="mt-2 space-x-4">
+            <button onclick="openModal('privacy-modal')" class="underline hover:text-slate-700">개인정보처리방침</button>
+            <button onclick="openModal('about-modal')" class="underline hover:text-slate-700">서비스 소개</button>
+        </div>
+    </footer>
+
+    <!-- Privacy Policy Modal -->
+    <div id="privacy-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl max-w-lg w-full p-6 text-sm max-h-[80vh] overflow-y-auto">
+            <h3 class="font-bold text-base mb-3">개인정보처리방침 (Privacy Policy)</h3>
+            <p class="text-slate-600 leading-relaxed mb-3">
+                본 웹사이트(GeoData Toolkit)는 방문자의 어떠한 개인 식별 정보나 업로드된 원본 파일 데이터를 외부 서버로 전송, 수집 또는 저장하지 않습니다.
+            </p>
+            <p class="text-slate-600 leading-relaxed mb-3">
+                1. 파일 처리: 사용자가 드래그 앤 드롭한 모든 파일은 사용자의 디바이스(Web Browser) 메모리 상에서만 일시적으로 읽히며, 새로고침 시 즉시 파기됩니다.<br>
+                2. 제3자 광고 쿠키: 사이트 운영을 위해 Google AdSense와 같은 파트너 서비스가 비개인화 쿠키를 사용할 수 있습니다.
+            </p>
+            <div class="text-right mt-4">
+                <button onclick="closeModal('privacy-modal')" class="bg-slate-800 text-white px-4 py-1.5 rounded text-xs">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- About Modal -->
+    <div id="about-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl max-w-md w-full p-6 text-sm">
+            <h3 class="font-bold text-base mb-2">About GeoData Toolkit</h3>
+            <p class="text-slate-600 leading-relaxed mb-4">
+                GeoAI 및 공간정보 데이터 엔지니어링 과정에서 반복되는 데이터 포맷 변환 및 좌표 투영 작업을 가장 간결하고 안전하게 처리하기 위해 개발되었습니다.
+            </p>
+            <div class="text-right">
+                <button onclick="closeModal('about-modal')" class="bg-slate-800 text-white px-4 py-1.5 rounded text-xs">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Logic Script -->
+    <script>
+        // 한국 좌표계 정의 (proj4)
+        proj4.defs([
+            ["EPSG:5179", "+proj=tmerc +lat_0=38 +lon_0=127.5 +k=0.9996 +x_0=1000000 +y_0=2000000 +ellps=GRS80 +units=m +no_defs"],
+            ["EPSG:5186", "+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=600000 +ellps=GRS80 +units=m +no_defs"]
+        ]);
+
+        let parsedData = [];
+        let parsedHeaders = [];
+
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+
+        dropzone.addEventListener('click', () => fileInput.click());
+        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('border-blue-500'); });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-blue-500'));
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('border-blue-500');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        function handleFile(file) {
+            document.getElementById('fileNameDisplay').textContent = file.name;
+            document.getElementById('fileSizeDisplay').textContent = `(${(file.size / 1024).toFixed(1)} KB)`;
+            
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    parsedData = results.data;
+                    parsedHeaders = results.meta.fields;
+                    renderTable(parsedHeaders, parsedData);
+                    populateColumnSelectors(parsedHeaders);
+                    document.getElementById('action-panel').classList.remove('hidden');
+                }
+            });
+        }
+
+        function renderTable(headers, data) {
+            const thead = document.getElementById('tableHeader');
+            const tbody = document.getElementById('tableBody');
+            thead.innerHTML = `<tr>${headers.map(h => `<th class="px-3 py-2 border-r border-slate-200">${h}</th>`).join('')}</tr>`;
+            
+            const rows = data.slice(0, 10).map(row => {
+                return `<tr class="hover:bg-slate-50">${headers.map(h => `<td class="px-3 py-1.5 border-r border-slate-200 whitespace-nowrap">${row[h] || ''}</td>`).join('')}</tr>`;
+            }).join('');
+            tbody.innerHTML = rows;
+        }
+
+        function populateColumnSelectors(headers) {
+            const xSelect = document.getElementById('xColSelect');
+            const ySelect = document.getElementById('yColSelect');
+            xSelect.innerHTML = '<option value="">선택 안 함</option>';
+            ySelect.innerHTML = '<option value="">선택 안 함</option>';
+
+            headers.forEach(h => {
+                const optX = document.createElement('option');
+                optX.value = h; optX.textContent = h;
+                const optY = document.createElement('option');
+                optY.value = h; optY.textContent = h;
+
+                // 자동 컬럼 추천
+                if (/^(x|lon|longitude|경도)$/i.test(h)) optX.selected = true;
+                if (/^(y|lat|latitude|위도)$/i.test(h)) optY.selected = true;
+
+                xSelect.appendChild(optX);
+                ySelect.appendChild(optY);
+            });
+        }
+
+        function exportToJSON() {
+            const blob = new Blob([JSON.stringify(parsedData, null, 2)], { type: 'application/json' });
+            downloadFile(blob, 'export_data.json');
+        }
+
+        function exportToGeoJSON() {
+            const xCol = document.getElementById('xColSelect').value;
+            const yCol = document.getElementById('yColSelect').value;
+            const srcCrs = document.getElementById('srcCrsSelect').value;
+
+            const features = parsedData.map(row => {
+                let x = parseFloat(row[xCol]);
+                let y = parseFloat(row[yCol]);
+                let coords = null;
+
+                if (!isNaN(x) && !isNaN(y)) {
+                    if (srcCrs !== 'EPSG:4326') {
+                        coords = proj4(srcCrs, 'EPSG:4326', [x, y]);
+                    } else {
+                        coords = [x, y];
+                    }
+                }
+
+                return {
+                    type: "Feature",
+                    geometry: coords ? { type: "Point", coordinates: coords } : null,
+                    properties: row
+                };
+            });
+
+            const geojson = { type: "FeatureCollection", features: features };
+            const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
+            downloadFile(blob, 'export_geodata.geojson');
+        }
+
+        function downloadFile(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+    </script>
+</body>
+</html>
